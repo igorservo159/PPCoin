@@ -8,7 +8,15 @@ pragma solidity 0.8.36;
 ///         payee na mesma transacao, e a falha do repasse reverte a transacao inteira.
 ///         Nenhuma funcao le address(this).balance, e nao existe `receive` nem `fallback`:
 ///         o contrato so aceita valor atraves de `pay`.
+///         Cada orderId liquida no maximo uma vez. A guarda e autoritativa porque a EVM
+///         executa as transacoes em ordem total: a segunda chamada le o que a primeira
+///         escreveu, mesmo no mesmo bloco.
 contract Payments {
+    /// @notice orderId ja liquidado por este contrato.
+    /// @dev    Publica de proposito: o app responde "esse orderId ja foi pago?" com uma
+    ///         chamada so, sem varrer faixa de blocos de log.
+    mapping(bytes32 => bool) public paid;
+
     /// @notice Repasse concluido.
     /// @param orderId Identificador da ordem, definido fora da chain.
     /// @param payer   Conta que assinou e custeou a transacao.
@@ -27,6 +35,8 @@ contract Payments {
     error ZeroPayee();
     /// @notice Pagamento sem valor produziria evento de pagamento sem pagamento.
     error ZeroAmount();
+    /// @notice Esse orderId ja foi liquidado. Leva o orderId recusado na revert data.
+    error AlreadyPaid(bytes32 orderId);
     /// @notice O payee recusou o valor ou nao e capaz de recebe-lo.
     error TransferFailed();
 
@@ -38,8 +48,10 @@ contract Payments {
         if (orderId == bytes32(0)) revert ZeroOrderId();
         if (payee == address(0)) revert ZeroPayee();
         if (msg.value == 0) revert ZeroAmount();
+        if (paid[orderId]) revert AlreadyPaid(orderId);
 
         // effects
+        paid[orderId] = true;
         emit Payment(orderId, msg.sender, payee, msg.value);
 
         // interactions

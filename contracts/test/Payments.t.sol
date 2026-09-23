@@ -128,6 +128,69 @@ contract PaymentsTest is Test {
         assertEq(address(payments).balance, 0, "contrato reteve ETH enviado direto");
     }
 
+    // ----------------------------------------------- idempotencia autoritativa
+
+    function test_Pay_MarksOrderIdAsPaid() public {
+        assertFalse(payments.paid(ORDER_ID), "orderId nasceu marcado");
+
+        vm.prank(payer);
+        payments.pay{value: AMOUNT}(ORDER_ID, payee);
+
+        assertTrue(payments.paid(ORDER_ID), "orderId nao ficou marcado");
+    }
+
+    function test_Pay_RevertsOnDuplicateOrderId() public {
+        vm.prank(payer);
+        payments.pay{value: AMOUNT}(ORDER_ID, payee);
+
+        vm.prank(payer);
+        vm.expectRevert(abi.encodeWithSelector(Payments.AlreadyPaid.selector, ORDER_ID));
+        payments.pay{value: AMOUNT}(ORDER_ID, payee);
+    }
+
+    function test_Pay_DuplicateMovesNoValue() public {
+        vm.prank(payer);
+        payments.pay{value: AMOUNT}(ORDER_ID, payee);
+
+        uint256 payerAfterFirst = payer.balance;
+        uint256 payeeAfterFirst = payee.balance;
+
+        vm.prank(payer);
+        vm.expectRevert(abi.encodeWithSelector(Payments.AlreadyPaid.selector, ORDER_ID));
+        payments.pay{value: AMOUNT}(ORDER_ID, payee);
+
+        assertEq(payer.balance, payerAfterFirst, "payer pagou duas vezes");
+        assertEq(payee.balance, payeeAfterFirst, "payee recebeu duas vezes");
+        assertEq(address(payments).balance, 0, "contrato reteve valor");
+    }
+
+    function test_Pay_FailedTransferDoesNotBurnOrderId() public {
+        address rejecting = address(new RejectingPayee());
+
+        vm.prank(payer);
+        vm.expectRevert(Payments.TransferFailed.selector);
+        payments.pay{value: AMOUNT}(ORDER_ID, rejecting);
+
+        assertFalse(payments.paid(ORDER_ID), "orderId ficou marcado apesar do revert");
+
+        vm.prank(payer);
+        payments.pay{value: AMOUNT}(ORDER_ID, payee);
+
+        assertEq(payee.balance, AMOUNT, "orderId recusado apos falha de repasse");
+    }
+
+    function test_Pay_DistinctOrderIdsDoNotCollide() public {
+        bytes32 other = keccak256("order-2");
+
+        vm.prank(payer);
+        payments.pay{value: AMOUNT}(ORDER_ID, payee);
+
+        vm.prank(payer);
+        payments.pay{value: AMOUNT}(other, payee);
+
+        assertEq(payee.balance, 2 * AMOUNT, "segundo orderId foi bloqueado");
+    }
+
     // ------------------------------------------------------------------------ fuzz
 
     function testFuzz_Pay_MovesExactAmount(bytes32 orderId, uint96 amount) public {
